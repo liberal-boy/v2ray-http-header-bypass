@@ -7,18 +7,25 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
+	"strings"
 )
 
 var method = []byte("V2RAY")
 var listen, destination, bypass, cert, key string
 
 func main() {
+	if !strings.Contains(os.Getenv("GODEBUG"), "tls13") {
+		_ = os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
+	}
+
 	flag.StringVar(&listen, "l", ":443", "listen address")
 	flag.StringVar(&destination, "d", "127.0.0.1:8000", "v2ray server address")
 	flag.StringVar(&bypass, "b", "127.0.0.1:80", "bypass server address")
 	flag.StringVar(&cert, "cert", "", "path to certificate file, blank to disable TLS")
 	flag.StringVar(&key, "key", "", "path to key file, blank to disable TLS")
 	flag.Parse()
+
 	server()
 }
 
