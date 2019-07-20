@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 )
 
 var methodBuf []byte
@@ -96,22 +97,26 @@ func handle(srcConn net.Conn) {
 		log.Printf("fail to connect to %s :%v\n", addr, err)
 		return
 	}
-	exitChan := make(chan struct{})
-	go func(sconn net.Conn, dconn net.Conn, Exit chan<- struct{}) {
-		_, _ = dconn.Write(buf)
-		_, err := io.Copy(dconn, sconn)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func(srcConn net.Conn, dstConn net.Conn) {
+		_, _ = dstConn.Write(buf)
+		_, err := io.Copy(dstConn, srcConn)
 		if err != nil {
 			log.Printf("failed to send to %s:%v\n", addr, err)
 		}
-		exitChan <- struct{}{}
-	}(srcConn, dstConn, exitChan)
-	go func(sconn net.Conn, dconn net.Conn, Exit chan<- struct{}) {
-		_, err := io.Copy(sconn, dconn)
+		wg.Done()
+	}(srcConn, dstConn)
+	go func(srcConn net.Conn, dstConn net.Conn) {
+		_, err := io.Copy(srcConn, dstConn)
 		if err != nil {
 			log.Printf("failed to read from %s: %v\n", addr, err)
 		}
-		exitChan <- struct{}{}
-	}(srcConn, dstConn, exitChan)
-	<-exitChan
+		wg.Done()
+	}(srcConn, dstConn)
+
+	wg.Wait()
 	_ = dstConn.Close()
 }
