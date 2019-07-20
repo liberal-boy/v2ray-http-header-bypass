@@ -1,7 +1,7 @@
 # v2ray-http-header-bypass
-利用 v2ray 的 tcp 头部伪装实现将伪装流量与正常 http 流量分流，程序将`method`为`V2RAY`的请求发给目标服务器 (v2ray)，为其他的请求发给绕行服务器(caddy 等 web 服务器)。
+利用 v2ray 的 tcp 头部伪装实现将伪装流量与正常 http 流量分流，程序将指定`method`为的请求发给目标服务器 (v2ray)，为其他的请求发给绕行服务器(caddy 等 web 服务器)。
 # example 
-`v2ray-http-header-bypass -l :443 -d 127.0.0.1:8000 -b 127.0.0.1:8080 -cert /path/to/tls/cert -key /path/to/tls/key`
+`v2ray-http-header-bypass -l :443 -d 127.0.0.1:8000 -b 127.0.0.1:8080 -cert /path/to/tls/cert -key /path/to/tls/key -method V2RAY`  
 inbound (server side)
 ```json
 {
