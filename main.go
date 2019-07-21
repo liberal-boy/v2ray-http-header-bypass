@@ -10,10 +10,15 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"v2ray.com/core/transport/internet/headers/http"
 )
 
 var methodBuf []byte
 var listen, destination, bypass, cert, key string
+var authenticator, _ = http.NewHttpAuthenticator(nil, &http.Config{
+	Request:  &http.RequestConfig{},
+	Response: &http.ResponseConfig{},
+})
 
 func main() {
 	if !strings.Contains(os.Getenv("GODEBUG"), "tls13") {
@@ -84,15 +89,23 @@ func handle(srcConn net.Conn) {
 		log.Printf("fail to read method:%v\n", err)
 		return
 	}
+	isSpecifiedMethid := bytes.Compare(buf[0:len(methodBuf)], methodBuf) == 0 && buf[len(methodBuf)] == ' '
 
 	var addr string
-	if bytes.Compare(buf[0:len(methodBuf)], methodBuf) == 0 && buf[len(methodBuf)] == ' ' {
+	if isSpecifiedMethid {
 		addr = destination
+		srcConn = authenticator.Server(srcConn)
 	} else {
 		addr = bypass
 	}
 
-	dstConn, err := net.Dial("tcp", addr)
+	var dstConn net.Conn
+	if strings.HasPrefix(addr, "unix:") {
+		dstConn, err = net.Dial("unix", addr[5:])
+	} else {
+		dstConn, err = net.Dial("tcp", addr)
+	}
+
 	if err != nil {
 		log.Printf("fail to connect to %s :%v\n", addr, err)
 		return
@@ -102,7 +115,9 @@ func handle(srcConn net.Conn) {
 	wg.Add(2)
 
 	go func(srcConn net.Conn, dstConn net.Conn) {
-		_, _ = dstConn.Write(buf)
+		if !isSpecifiedMethid {
+			_, _ = dstConn.Write(buf)
+		}
 		_, err := io.Copy(dstConn, srcConn)
 		if err != nil {
 			log.Printf("failed to send to %s:%v\n", addr, err)
