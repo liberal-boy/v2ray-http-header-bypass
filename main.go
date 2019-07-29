@@ -85,14 +85,14 @@ func handle(srcConn net.Conn) {
 
 	buf := make([]byte, len(methodBuf)+1)
 	_, err := srcConn.Read(buf)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		log.Printf("fail to read method:%v\n", err)
 		return
 	}
-	isSpecifiedMethid := bytes.Compare(buf[0:len(methodBuf)], methodBuf) == 0 && buf[len(methodBuf)] == ' '
+	isSpecifiedMethod := bytes.Compare(buf[0:len(methodBuf)], methodBuf) == 0 && buf[len(methodBuf)] == ' '
 
 	var addr string
-	if isSpecifiedMethid {
+	if isSpecifiedMethod {
 		addr = destination
 		srcConn = authenticator.Server(srcConn)
 	} else {
@@ -115,7 +115,7 @@ func handle(srcConn net.Conn) {
 	wg.Add(2)
 
 	go func(srcConn net.Conn, dstConn net.Conn) {
-		if !isSpecifiedMethid {
+		if !isSpecifiedMethod {
 			_, _ = dstConn.Write(buf)
 		}
 		_, err := io.Copy(dstConn, srcConn)
