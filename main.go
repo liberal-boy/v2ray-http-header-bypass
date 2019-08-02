@@ -134,14 +134,14 @@ func handle(srcConn net.Conn) {
 			_, _ = dstConn.Write(buf)
 		}
 		_, err := io.Copy(dstConn, srcConn)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			log.Printf("failed to send to %s:%v\n", addr, err)
 		}
 		wg.Done()
 	}(srcConn, dstConn)
 	go func(srcConn net.Conn, dstConn net.Conn) {
 		_, err := io.Copy(srcConn, dstConn)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			log.Printf("failed to read from %s: %v\n", addr, err)
 		}
 		wg.Done()
