@@ -41,12 +41,18 @@ func main() {
 }
 
 func listenTls() (ln net.Listener, err error) {
-	cert, err := tls.LoadX509KeyPair(cert, key)
-	if err != nil {
-		return
+	certs := strings.Split(cert, ",")
+	keys := strings.Split(key, ",")
+	keyPairs := make([]tls.Certificate, len(certs))
+	for i := 0; i < len(keyPairs); i++ {
+		keyPairs[i], err = tls.LoadX509KeyPair(certs[i], keys[i])
+		if err != nil {
+			return
+		}
 	}
+
 	config := &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates: keyPairs,
 		MinVersion:   tls.VersionTLS12,
 		CipherSuites: []uint16{
 			tls.TLS_AES_128_GCM_SHA256,
@@ -61,6 +67,8 @@ func listenTls() (ln net.Listener, err error) {
 			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
 		},
 	}
+	config.BuildNameToCertificate()
+
 	ln, err = tls.Listen("tcp", listen, config)
 	return
 }
