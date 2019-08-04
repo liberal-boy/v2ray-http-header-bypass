@@ -92,7 +92,7 @@ func server() {
 		log.Fatalf("failed to listen on %s: %v", listen, err)
 	}
 
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -104,7 +104,7 @@ func server() {
 }
 
 func handle(srcConn net.Conn) {
-	defer srcConn.Close()
+	defer func() { _ = srcConn.Close() }()
 
 	buf := make([]byte, len(methodBuf)+1)
 	_, err := srcConn.Read(buf)
@@ -134,6 +134,8 @@ func handle(srcConn net.Conn) {
 		return
 	}
 
+	defer func() { _ = dstConn.Close() }()
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -156,5 +158,4 @@ func handle(srcConn net.Conn) {
 	}(srcConn, dstConn)
 
 	wg.Wait()
-	_ = dstConn.Close()
 }
