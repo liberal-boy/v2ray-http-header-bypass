@@ -16,8 +16,11 @@ import (
 var methodBuf []byte
 var listen, destination, bypass, cert, key string
 var authenticator, _ = http.NewHttpAuthenticator(nil, &http.Config{
-	Request:  &http.RequestConfig{},
-	Response: &http.ResponseConfig{},
+	Response: &http.ResponseConfig{
+		Version: &http.Version{Value: ""},
+		Status:  &http.Status{Code: "", Reason: ""},
+		Header:  []*http.Header{{Name: "Date", Value: []string{""}}},
+	},
 })
 
 func main() {

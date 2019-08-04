@@ -26,7 +26,12 @@ outbound (client side)
             "header": {
                 "type": "http",
                 "request": {
-                    "method": "V2RAY"
+                    "method": "V2RAY",
+                    "version": " ",
+                    "path": [""],
+                    "headers": {
+                        "": ""
+                    }
                 }
             }
         }
