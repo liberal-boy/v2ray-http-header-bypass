@@ -18,7 +18,6 @@ var config struct {
 	Listen       string        `json:"listen"`
 	Certificates []certificate `json:"certificates"`
 	BypassAddr   string        `json:"bypassAddr"`
-	MethodLen    int           `json:"methodLen"`
 	MethodAddrs  []*methodAddr `json:"methodsAddrs"`
 }
 
@@ -32,6 +31,8 @@ type methodAddr struct {
 	MethodBuf  []byte `json:"_"`
 	Addr       string `json:"addr"`
 }
+
+var methodBufLen int
 
 var authenticator, _ = http.NewHttpAuthenticator(nil, &http.Config{
 	Response: &http.ResponseConfig{
@@ -58,7 +59,6 @@ func main() {
 	flag.Parse()
 
 	if configPath == "" {
-		config.MethodLen = len(method)
 		config.MethodAddrs = []*methodAddr{{
 			MethodName: method,
 			Addr:       destination,
@@ -88,8 +88,9 @@ func main() {
 
 	for _, ma := range config.MethodAddrs {
 		ma.MethodBuf = []byte(ma.MethodName)
-		if len(ma.MethodBuf) != config.MethodLen {
-			log.Fatalf("length of methodName %s not epuals methodLen %d", ma.MethodName, config.MethodLen)
+		mbl := len(ma.MethodBuf) + 1
+		if mbl > methodBufLen {
+			methodBufLen = mbl
 		}
 	}
 
@@ -160,7 +161,7 @@ func server() {
 func handle(srcConn net.Conn) {
 	defer func() { _ = srcConn.Close() }()
 
-	buf := make([]byte, config.MethodLen+1)
+	buf := make([]byte, methodBufLen)
 	_, err := srcConn.Read(buf)
 	if err != nil && err != io.EOF {
 		log.Printf("fail to read method:%v\n", err)
@@ -168,14 +169,17 @@ func handle(srcConn net.Conn) {
 	}
 	var isSpecifiedMethod bool
 	var addr string
-	if buf[config.MethodLen] == ' ' {
-		for _, ma := range config.MethodAddrs {
-			if bytes.Compare(buf[0:config.MethodLen], ma.MethodBuf) == 0 {
-				isSpecifiedMethod = true
-				addr = ma.Addr
-				srcConn = authenticator.Server(srcConn)
-				break
+	for i, b := range buf {
+		if b == ' ' {
+			for _, ma := range config.MethodAddrs {
+				if bytes.Compare(buf[0:i], ma.MethodBuf) == 0 {
+					isSpecifiedMethod = true
+					addr = ma.Addr
+					srcConn = authenticator.Server(srcConn)
+					break
+				}
 			}
+			break
 		}
 	}
 
