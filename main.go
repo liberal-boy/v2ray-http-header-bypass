@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"io"
 	"log"
@@ -13,8 +14,25 @@ import (
 	"v2ray.com/core/transport/internet/headers/http"
 )
 
-var methodBuf []byte
-var listen, destination, bypass, cert, key string
+var config struct {
+	Listen       string        `json:"listen"`
+	Certificates []certificate `json:"certificates"`
+	BypassAddr   string        `json:"bypassAddr"`
+	MethodLen    int           `json:"methodLen"`
+	MethodAddrs  []*methodAddr `json:"methodsAddrs"`
+}
+
+type certificate struct {
+	CertificateFile string `json:"certificateFile"`
+	KeyFile         string `json:"keyFile"`
+}
+
+type methodAddr struct {
+	MethodName string `json:"methodName"`
+	MethodBuf  []byte `json:"_"`
+	Addr       string `json:"addr"`
+}
+
 var authenticator, _ = http.NewHttpAuthenticator(nil, &http.Config{
 	Response: &http.ResponseConfig{
 		Version: &http.Version{Value: ""},
@@ -28,33 +46,66 @@ func main() {
 		_ = os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
 	}
 
-	var method string
+	var method, destination, cert, key, configPath string
 
-	flag.StringVar(&listen, "l", ":443", "listen address")
+	flag.StringVar(&config.Listen, "l", ":443", "listen address")
 	flag.StringVar(&destination, "d", "127.0.0.1:8000", "v2ray server address")
-	flag.StringVar(&bypass, "b", "127.0.0.1:80", "bypass server address")
+	flag.StringVar(&config.BypassAddr, "b", "127.0.0.1:80", "bypass server address")
 	flag.StringVar(&cert, "cert", "", "path to certificate file, blank to disable TLS")
 	flag.StringVar(&key, "key", "", "path to key file, blank to disable TLS")
 	flag.StringVar(&method, "method", "V2RAY", "method name of v2ray http header")
+	flag.StringVar(&configPath, "config", "", "path to config file")
 	flag.Parse()
 
-	methodBuf = []byte(method)
+	if configPath == "" {
+		config.MethodLen = len(method)
+		config.MethodAddrs = []*methodAddr{{
+			MethodName: method,
+			Addr:       destination,
+		}}
+		if cert != "" && key != "" {
+			certs := strings.Split(cert, ",")
+			keys := strings.Split(key, ",")
+			config.Certificates = make([]certificate, len(certs))
+			for i := 0; i < len(config.Certificates); i++ {
+				config.Certificates[i] = certificate{
+					CertificateFile: certs[i],
+					KeyFile:         keys[i],
+				}
+			}
+		}
+	} else {
+		configFile, err := os.Open(configPath)
+		if err != nil {
+			log.Fatalf("fail to open file %s: %v", configPath, err)
+		}
+		defer func() { _ = configFile.Close() }()
+		err = json.NewDecoder(configFile).Decode(&config)
+		if err != nil {
+			log.Fatalf("fail to parse config: %v", err)
+		}
+	}
+
+	for _, ma := range config.MethodAddrs {
+		ma.MethodBuf = []byte(ma.MethodName)
+		if len(ma.MethodBuf) != config.MethodLen {
+			log.Fatalf("length of methodName %s not epuals methodLen %d", ma.MethodName, config.MethodLen)
+		}
+	}
 
 	server()
 }
 
 func listenTls() (ln net.Listener, err error) {
-	certs := strings.Split(cert, ",")
-	keys := strings.Split(key, ",")
-	keyPairs := make([]tls.Certificate, len(certs))
-	for i := 0; i < len(keyPairs); i++ {
-		keyPairs[i], err = tls.LoadX509KeyPair(certs[i], keys[i])
+	keyPairs := make([]tls.Certificate, len(config.Certificates))
+	for i := 0; i < len(config.Certificates); i++ {
+		keyPairs[i], err = tls.LoadX509KeyPair(config.Certificates[i].CertificateFile, config.Certificates[i].KeyFile)
 		if err != nil {
 			return
 		}
 	}
 
-	config := &tls.Config{
+	tlsConfig := &tls.Config{
 		Certificates: keyPairs,
 		MinVersion:   tls.VersionTLS12,
 		CipherSuites: []uint16{
@@ -70,14 +121,14 @@ func listenTls() (ln net.Listener, err error) {
 			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
 		},
 	}
-	config.BuildNameToCertificate()
+	tlsConfig.BuildNameToCertificate()
 
-	ln, err = tls.Listen("tcp", listen, config)
+	ln, err = tls.Listen("tcp", config.Listen, tlsConfig)
 	return
 }
 
 func listenTcp() (ln net.Listener, err error) {
-	ln, err = net.Listen("tcp", listen)
+	ln, err = net.Listen("tcp", config.Listen)
 	return
 }
 
@@ -85,14 +136,14 @@ func server() {
 	var ln net.Listener
 	var err error
 
-	if cert != "" && key != "" {
+	if len(config.Certificates) != 0 {
 		ln, err = listenTls()
 	} else {
 		ln, err = listenTcp()
 	}
 
 	if err != nil {
-		log.Fatalf("failed to listen on %s: %v", listen, err)
+		log.Fatalf("failed to listen on %s: %v", config.Listen, err)
 	}
 
 	defer func() { _ = ln.Close() }()
@@ -109,20 +160,27 @@ func server() {
 func handle(srcConn net.Conn) {
 	defer func() { _ = srcConn.Close() }()
 
-	buf := make([]byte, len(methodBuf)+1)
+	buf := make([]byte, config.MethodLen+1)
 	_, err := srcConn.Read(buf)
 	if err != nil && err != io.EOF {
 		log.Printf("fail to read method:%v\n", err)
 		return
 	}
-	isSpecifiedMethod := bytes.Compare(buf[0:len(methodBuf)], methodBuf) == 0 && buf[len(methodBuf)] == ' '
-
+	var isSpecifiedMethod bool
 	var addr string
-	if isSpecifiedMethod {
-		addr = destination
-		srcConn = authenticator.Server(srcConn)
-	} else {
-		addr = bypass
+	if buf[config.MethodLen] == ' ' {
+		for _, ma := range config.MethodAddrs {
+			if bytes.Compare(buf[0:config.MethodLen], ma.MethodBuf) == 0 {
+				isSpecifiedMethod = true
+				addr = ma.Addr
+				srcConn = authenticator.Server(srcConn)
+				break
+			}
+		}
+	}
+
+	if addr == "" {
+		addr = config.BypassAddr
 	}
 
 	var dstConn net.Conn

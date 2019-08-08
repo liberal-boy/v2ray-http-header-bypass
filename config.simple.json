@@ -1,0 +1,17 @@
+{
+  "listen": ":443",
+  "bypassAddr": "127.0.0.1:8080",
+  "MethodLen": 5,
+  "certificates": [
+    {
+      "certificateFile": "/path/to/certificate",
+      "keyFile": "/path/to/key"
+    }
+  ],
+  "methodsAddrs": [
+    {
+      "methodName": "V2RAY",
+      "addr": "unix:/path/to/ds/file"
+    }
+  ]
+}
