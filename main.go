@@ -4,21 +4,28 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
+	"github.com/oxtoacart/bpool"
 	"io"
 	"log"
 	"net"
 	"os"
 	"strings"
 	"sync"
-	"v2ray.com/core/transport/internet/headers/http"
 )
 
-var config struct {
-	Listen       string        `json:"listen"`
-	Certificates []certificate `json:"certificates"`
-	BypassAddr   string        `json:"bypassAddr"`
-	MethodAddrs  []*methodAddr `json:"methodsAddrs"`
+var ENDING = []byte("\r\n\r\n")
+
+var ErrHeaderToLong = errors.New("header too long")
+
+type Config struct {
+	Listen        string        `json:"listen"`
+	Certificates  []certificate `json:"certificates"`
+	BypassAddr    string        `json:"bypassAddr"`
+	MethodAddrs   []*methodAddr `json:"methodsAddrs"`
+	BufSize       int           `json:"bufSize"`
+	MaxHeaderSize int           `json:"maxHeaderSize"`
 }
 
 type certificate struct {
@@ -32,21 +39,25 @@ type methodAddr struct {
 	Addr       string `json:"addr"`
 }
 
-var methodBufLen int
+var config = Config{
+	BufSize:       128,
+	MaxHeaderSize: 128,
+}
 
-var authenticator, _ = http.NewHttpAuthenticator(nil, &http.Config{
-	Response: &http.ResponseConfig{
-		Version: &http.Version{Value: ""},
-		Status:  &http.Status{Code: "", Reason: ""},
-		Header:  []*http.Header{{Name: "Date", Value: []string{""}}},
-	},
-})
+var methodBufPool *bpool.BytePool
+var headerBufPool *bpool.BytePool
 
 func main() {
 	if !strings.Contains(os.Getenv("GODEBUG"), "tls13") {
 		_ = os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
 	}
 
+	initConfig()
+
+	server()
+}
+
+func initConfig() {
 	var method, destination, cert, key, configPath string
 
 	flag.StringVar(&config.Listen, "l", ":443", "listen address")
@@ -86,6 +97,8 @@ func main() {
 		}
 	}
 
+	var methodBufLen int
+
 	for _, ma := range config.MethodAddrs {
 		ma.MethodBuf = []byte(ma.MethodName)
 		mbl := len(ma.MethodBuf) + 1
@@ -94,7 +107,8 @@ func main() {
 		}
 	}
 
-	server()
+	methodBufPool = bpool.NewBytePool(config.BufSize, methodBufLen)
+	headerBufPool = bpool.NewBytePool(config.BufSize, config.MaxHeaderSize)
 }
 
 func listenTls() (ln net.Listener, err error) {
@@ -161,7 +175,8 @@ func server() {
 func handle(srcConn net.Conn) {
 	defer func() { _ = srcConn.Close() }()
 
-	buf := make([]byte, methodBufLen)
+	buf := methodBufPool.Get()
+	defer methodBufPool.Put(buf)
 	_, err := srcConn.Read(buf)
 	if err != nil && err != io.EOF {
 		log.Printf("fail to read method:%v\n", err)
@@ -169,13 +184,18 @@ func handle(srcConn net.Conn) {
 	}
 	var isSpecifiedMethod bool
 	var addr string
+	var leftOver []byte
 	for i, b := range buf {
 		if b == ' ' {
 			for _, ma := range config.MethodAddrs {
 				if bytes.Compare(buf[0:i], ma.MethodBuf) == 0 {
 					isSpecifiedMethod = true
 					addr = ma.Addr
-					srcConn = authenticator.Server(srcConn)
+					leftOver, err = removeHttpHeader(srcConn)
+					if err != nil && err != io.EOF {
+						log.Printf("fail to remove http header:%v\n", err)
+						return
+					}
 					break
 				}
 			}
@@ -207,6 +227,8 @@ func handle(srcConn net.Conn) {
 	go func(srcConn net.Conn, dstConn net.Conn) {
 		if !isSpecifiedMethod {
 			_, _ = dstConn.Write(buf)
+		} else {
+			_, _ = dstConn.Write(leftOver)
 		}
 		_, err := io.Copy(dstConn, srcConn)
 		if err != nil && err != io.EOF {
@@ -215,6 +237,9 @@ func handle(srcConn net.Conn) {
 		wg.Done()
 	}(srcConn, dstConn)
 	go func(srcConn net.Conn, dstConn net.Conn) {
+		if isSpecifiedMethod {
+			_, _ = srcConn.Write(ENDING)
+		}
 		_, err := io.Copy(srcConn, dstConn)
 		if err != nil && err != io.EOF {
 			log.Printf("failed to read from %s: %v\n", addr, err)
@@ -223,4 +248,20 @@ func handle(srcConn net.Conn) {
 	}(srcConn, dstConn)
 
 	wg.Wait()
+}
+
+func removeHttpHeader(reader io.Reader) (leftOver []byte, err error) {
+	buf := headerBufPool.Get()
+	defer headerBufPool.Put(buf)
+	n, err := reader.Read(buf)
+	if err != nil && err != io.EOF {
+		return
+	}
+	idxEnding := bytes.Index(buf[0:n], ENDING)
+	if idxEnding < 0 {
+		err = ErrHeaderToLong
+		return
+	}
+	leftOver = buf[idxEnding+len(ENDING) : n]
+	return
 }
