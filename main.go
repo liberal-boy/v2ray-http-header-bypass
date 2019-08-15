@@ -176,7 +176,13 @@ func handle(srcConn net.Conn) {
 	defer func() { _ = srcConn.Close() }()
 
 	buf := methodBufPool.Get()
-	defer methodBufPool.Put(buf)
+	var once sync.Once
+	putBuf := func() {
+		once.Do(func() {
+			methodBufPool.Put(buf)
+		})
+	}
+	defer putBuf()
 	_, err := srcConn.Read(buf)
 	if err != nil && err != io.EOF {
 		log.Printf("fail to read method:%v\n", err)
@@ -190,6 +196,7 @@ func handle(srcConn net.Conn) {
 			for _, ma := range config.MethodAddrs {
 				if bytes.Compare(buf[0:i], ma.MethodBuf) == 0 {
 					isSpecifiedMethod = true
+					putBuf()
 					addr = ma.Addr
 					leftOver, err = removeHttpHeader(srcConn)
 					if err != nil && err != io.EOF {
@@ -227,6 +234,7 @@ func handle(srcConn net.Conn) {
 	go func(srcConn net.Conn, dstConn net.Conn) {
 		if !isSpecifiedMethod {
 			_, _ = dstConn.Write(buf)
+			putBuf()
 		} else {
 			_, _ = dstConn.Write(leftOver)
 		}
