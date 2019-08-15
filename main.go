@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"github.com/mholt/certmagic"
 	"github.com/oxtoacart/bpool"
 	"io"
 	"log"
@@ -112,17 +113,17 @@ func initConfig() {
 }
 
 func listenTls() (ln net.Listener, err error) {
-	keyPairs := make([]tls.Certificate, len(config.Certificates))
-	for i := 0; i < len(config.Certificates); i++ {
-		keyPairs[i], err = tls.LoadX509KeyPair(config.Certificates[i].CertificateFile, config.Certificates[i].KeyFile)
+	magic := certmagic.NewDefault()
+	for _, cert := range config.Certificates {
+		err = magic.CacheUnmanagedCertificatePEMFile(cert.CertificateFile, cert.KeyFile, nil)
 		if err != nil {
 			return
 		}
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates: keyPairs,
-		MinVersion:   tls.VersionTLS12,
+		GetCertificate: magic.GetCertificate,
+		MinVersion:     tls.VersionTLS12,
 		CipherSuites: []uint16{
 			tls.TLS_AES_128_GCM_SHA256,
 			tls.TLS_AES_256_GCM_SHA384,
@@ -136,7 +137,6 @@ func listenTls() (ln net.Listener, err error) {
 			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
 		},
 	}
-	tlsConfig.BuildNameToCertificate()
 
 	ln, err = tls.Listen("tcp", config.Listen, tlsConfig)
 	return
