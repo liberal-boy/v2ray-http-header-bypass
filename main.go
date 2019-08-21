@@ -21,12 +21,13 @@ var ENDING = []byte("\r\n\r\n")
 var ErrHeaderToLong = errors.New("header too long")
 
 type Config struct {
-	Listen        string        `json:"listen"`
-	Certificates  []certificate `json:"certificates"`
-	BypassAddr    string        `json:"bypassAddr"`
-	MethodAddrs   []*methodAddr `json:"methodsAddrs"`
-	BufSize       int           `json:"bufSize"`
-	MaxHeaderSize int           `json:"maxHeaderSize"`
+	Listen                    string        `json:"listen"`
+	Certificates              []certificate `json:"certificates"`
+	AutoAuthorityCertificates []string      `json:"autoAuthorityCertificates"`
+	BypassAddr                string        `json:"bypassAddr"`
+	MethodAddrs               []*methodAddr `json:"methodsAddrs"`
+	BufSize                   int           `json:"bufSize"`
+	MaxHeaderSize             int           `json:"maxHeaderSize"`
 }
 
 type certificate struct {
@@ -114,11 +115,17 @@ func initConfig() {
 
 func listenTls() (ln net.Listener, err error) {
 	magic := certmagic.NewDefault()
+	magic.Agreed = true
 	for _, cert := range config.Certificates {
 		err = magic.CacheUnmanagedCertificatePEMFile(cert.CertificateFile, cert.KeyFile, nil)
 		if err != nil {
 			return
 		}
+	}
+
+	err = magic.Manage(config.AutoAuthorityCertificates)
+	if err != nil {
+		return
 	}
 
 	tlsConfig := &tls.Config{
