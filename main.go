@@ -50,10 +50,6 @@ var methodBufPool *bpool.BytePool
 var headerBufPool *bpool.BytePool
 
 func main() {
-	if !strings.Contains(os.Getenv("GODEBUG"), "tls13") {
-		_ = os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
-	}
-
 	initConfig()
 
 	server()
